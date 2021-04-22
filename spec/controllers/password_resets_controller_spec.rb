@@ -19,7 +19,7 @@
 require "rails_helper"
 
 def random_valid_user_params
-  pass = Faker::Internet.password(8)
+  pass = Faker::Internet.password(min_length: 8)
   {
     user: {
       name: Faker::Name.first_name,
@@ -71,16 +71,54 @@ describe PasswordResetsController, type: :controller do
         expect(response).to redirect_to("/404")
       end
     end
+
+    context "reCAPTCHA enabled" do
+      before do
+        allow(Rails.configuration).to receive(:enable_email_verification).and_return(true)
+        allow(Rails.configuration).to receive(:recaptcha_enabled).and_return(true)
+      end
+
+      it "sends a reset email if the recaptcha was passed" do
+        allow(controller).to receive(:valid_captcha).and_return(true)
+
+        user = create(:user, provider: "greenlight")
+
+        params = {
+          password_reset: {
+            email: user.email,
+          },
+        }
+
+        expect { post :create, params: params }.to change { ActionMailer::Base.deliveries.count }.by(1)
+      end
+
+      it "doesn't send an email if the recaptcha was failed" do
+        allow(controller).to receive(:valid_captcha).and_return(false)
+
+        user = create(:user)
+
+        params = {
+          password_reset: {
+            email: user.email,
+          },
+        }
+
+        post :create, params: params
+        expect(response).to redirect_to(new_password_reset_path)
+        expect(flash[:alert]).to be_present
+      end
+    end
   end
 
   describe "PATCH #update" do
     before do
       allow(Rails.configuration).to receive(:enable_email_verification).and_return(true)
+      @user = create(:user, provider: "greenlight")
     end
 
     context "valid user" do
       it "reloads page with notice if password is empty" do
-        token = "reset_token"
+        token = @user.create_reset_digest
         allow(controller).to receive(:check_expiration).and_return(nil)
 
         params = {
@@ -95,7 +133,7 @@ describe PasswordResetsController, type: :controller do
       end
 
       it "reloads page with notice if password is confirmation doesn't match" do
-        token = "reset_token"
+        token = @user.create_reset_digest
 
         allow(controller).to receive(:check_expiration).and_return(nil)
 
